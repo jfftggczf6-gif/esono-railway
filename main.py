@@ -156,6 +156,42 @@ def parse_pdf_ocr(file_bytes: bytes, filename: str) -> dict:
 # ═══════════════════════════════════════════════════════════════
 def parse_excel(file_bytes: bytes, filename: str) -> dict:
     """Parse Excel: all sheets, merged cells, formulas evaluated, hidden sheets."""
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    
+    if ext == "xls":
+        import xlrd
+        wb = xlrd.open_workbook(file_contents=file_bytes)
+        full_text = ""
+        sheet_count = wb.nsheets
+        for i in range(wb.nsheets):
+            ws = wb.sheet_by_index(i)
+            full_text += f"\n┌═══ Feuille: \"{ws.name}\" ({ws.nrows}×{ws.ncols}) ═══\n"
+            for r in range(min(ws.nrows, 500)):
+                cells = []
+                for c in range(ws.ncols):
+                    val = ws.cell_value(r, c)
+                    if val == "":
+                        cells.append("—")
+                    elif isinstance(val, float):
+                        if abs(val) >= 1000:
+                            cells.append(f"{val:,.0f}".replace(",", " "))
+                        elif val % 1 != 0:
+                            cells.append(f"{val:.2f}")
+                        else:
+                            cells.append(str(int(val)))
+                    else:
+                        cells.append(str(val).strip()[:200])
+                if all(c == "—" for c in cells):
+                    continue
+                if r == 0:
+                    full_text += f"│ [{'] | ['.join(cells)}]\n│ {'─' * 60}\n"
+                else:
+                    full_text += f"│ {' | '.join(cells)}\n"
+            full_text += f"└═══ Fin \"{ws.name}\" ═══\n"
+        text_len = len(full_text.strip())
+        quality = "high" if text_len > 500 else "medium" if text_len > 100 else "low"
+        return {"content": full_text[:MAX_CHARS_PER_FILE], "sheets": sheet_count, "quality": quality, "method": "xlrd"}
+    
     import openpyxl
     
     wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True, read_only=False)
