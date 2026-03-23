@@ -9,7 +9,9 @@ RUN apt-get update && apt-get install -y \
     libgdk-pixbuf-2.0-0 \
     libffi-dev \
     libcairo2 \
-    wkhtmltopdf \
+    libgobject-2.0-0 \
+    libharfbuzz0b \
+    fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY requirements.txt .
