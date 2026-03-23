@@ -136,6 +136,30 @@ def wfr(ws, row, d, skip_s=True):
 
 
 def fill_ovo(wb, data):
+    # ── Safety: ensure nested objects are dicts, not lists ──
+    def safe_dict(val):
+        if isinstance(val, dict):
+            return val
+        if isinstance(val, list) and len(val) == 1 and isinstance(val[0], dict):
+            return val[0]
+        return {}
+
+    for key in ["years", "ranges", "channels", "loans", "scenarios", "opex",
+                "cogs", "startup_costs_detail", "funding", "metadata"]:
+        if key in data and not isinstance(data[key], dict):
+            print(f"[fill_ovo] WARNING: '{key}' is {type(data[key]).__name__}, converting to dict")
+            data[key] = safe_dict(data[key])
+
+    if isinstance(data.get("loans"), dict):
+        for lk in ["ovo", "family", "bank"]:
+            if lk in data["loans"] and not isinstance(data["loans"][lk], dict):
+                data["loans"][lk] = safe_dict(data["loans"][lk])
+
+    if isinstance(data.get("scenarios"), dict):
+        for sk, sv in list(data["scenarios"].items()):
+            if not isinstance(sv, dict):
+                data["scenarios"][sk] = safe_dict(sv)
+
     inp = wb["InputsData"]
     rev = wb["RevenueData"]
     fin = wb["FinanceData"]
