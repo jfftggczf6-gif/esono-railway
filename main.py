@@ -647,7 +647,39 @@ async def parse_document(
 @app.get("/health")
 async def health():
     """Health check endpoint."""
-    return {"status": "ok", "version": "1.3.0", "features": ["parse", "ovo-excel", "odd-excel", "memo-pptx"]}
+    return {"status": "ok", "version": "1.4.0", "features": ["parse", "ovo-excel", "odd-excel", "memo-pptx", "pdf-export"]}
+
+
+# ── PDF Export endpoint (WeasyPrint) ──
+
+@app.post("/generate-pdf")
+async def generate_pdf(request: Request, authorization: Optional[str] = Header(None)):
+    """Convert HTML content to PDF using WeasyPrint."""
+    PK = os.getenv("PARSER_API_KEY", "esono-parser-dev-key")
+    if authorization != f"Bearer {PK}":
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    body = await request.json()
+    html_content = body.get("html", "")
+    filename = body.get("filename", "livrable.pdf")
+
+    if not html_content:
+        raise HTTPException(status_code=400, detail="html field required")
+
+    try:
+        from weasyprint import HTML
+        pdf_bytes = HTML(string=html_content).write_pdf()
+        print(f"[generate-pdf] Generated {len(pdf_bytes)} bytes for {filename}")
+    except Exception as e:
+        print(f"[generate-pdf] Error: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"PDF generation failed: {e}")
+
+    from fastapi.responses import Response
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
 
 
 # ── Register Excel generation endpoints ──
