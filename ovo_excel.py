@@ -136,29 +136,71 @@ def wfr(ws, row, d, skip_s=True):
 
 
 def fill_ovo(wb, data):
-    # ── Safety: ensure nested objects are dicts, not lists ──
+    # ── Safety: recursively ensure all nested objects are dicts where expected ──
     def safe_dict(val):
+        """Convert to dict if not already. Single-element list [{...}] → unwrap."""
         if isinstance(val, dict):
             return val
-        if isinstance(val, list) and len(val) == 1 and isinstance(val[0], dict):
-            return val[0]
+        if isinstance(val, list):
+            if len(val) == 1 and isinstance(val[0], dict):
+                return val[0]
+            if len(val) == 0:
+                return {}
+            # List of non-dict items — can't convert
+            return {}
         return {}
 
+    def sanitize(obj):
+        """Recursively sanitize: any dict value that should be a dict but is a list gets converted."""
+        if not isinstance(obj, dict):
+            return obj
+        result = {}
+        for k, v in obj.items():
+            if isinstance(v, dict):
+                result[k] = sanitize(v)
+            elif isinstance(v, list):
+                # If list of dicts (like products, services, staff, capex items) → keep as list but sanitize each
+                if v and isinstance(v[0], dict):
+                    result[k] = [sanitize(item) if isinstance(item, dict) else item for item in v]
+                else:
+                    result[k] = v
+            else:
+                result[k] = v
+        return result
+
+    # Sanitize top-level keys that must be dicts
     for key in ["years", "ranges", "channels", "loans", "scenarios", "opex",
-                "cogs", "startup_costs_detail", "funding", "metadata"]:
+                "cogs", "startup_costs_detail", "funding", "metadata",
+                "working_capital", "capex"]:
         if key in data and not isinstance(data[key], dict):
             print(f"[fill_ovo] WARNING: '{key}' is {type(data[key]).__name__}, converting to dict")
             data[key] = safe_dict(data[key])
 
-    if isinstance(data.get("loans"), dict):
-        for lk in ["ovo", "family", "bank"]:
-            if lk in data["loans"] and not isinstance(data["loans"][lk], dict):
-                data["loans"][lk] = safe_dict(data["loans"][lk])
+    # Deep sanitize the entire opex tree (most complex nesting)
+    if "opex" in data and isinstance(data["opex"], dict):
+        data["opex"] = sanitize(data["opex"])
 
-    if isinstance(data.get("scenarios"), dict):
-        for sk, sv in list(data["scenarios"].items()):
-            if not isinstance(sv, dict):
-                data["scenarios"][sk] = safe_dict(sv)
+    # Deep sanitize loans, scenarios, working_capital
+    for key in ["loans", "scenarios", "working_capital"]:
+        if key in data and isinstance(data[key], dict):
+            data[key] = sanitize(data[key])
+
+    # Special handling for capex: AI might send a flat list instead of categorized dict
+    capex_raw = data.get("capex", {})
+    if isinstance(capex_raw, list):
+        print(f"[fill_ovo] WARNING: 'capex' is a list ({len(capex_raw)} items), converting to categorized dict")
+        categorized = {"office": [], "production": [], "other": [], "intangible": [], "startup": []}
+        for item in capex_raw:
+            if not isinstance(item, dict):
+                continue
+            cat = item.get("category", item.get("type", "other")).lower()
+            if cat in categorized:
+                categorized[cat].append(item)
+            else:
+                categorized["other"].append(item)
+        data["capex"] = categorized
+    elif isinstance(capex_raw, dict):
+        data["capex"] = sanitize(capex_raw)
 
     inp = wb["InputsData"]
     rev = wb["RevenueData"]
