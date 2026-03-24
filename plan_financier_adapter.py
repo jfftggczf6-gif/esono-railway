@@ -60,6 +60,104 @@ def _build_loan_amount_by_year(amount, term_years):
     return {year_keys[i]: yearly for i in range(min(term, len(year_keys)))}
 
 
+def _aggregate_products_into_slot1(products):
+    """
+    Aggregate up to 3 products into Product 1 using R1/R2/R3 ranges.
+    - R1 = product 0, R2 = product 1, R3 = product 2
+    - Total volume = sum of all product volumes
+    - Mix R1/R2/R3 = share of each product's CA in total CA
+    - Price R1/R2/R3 = each product's unit price
+    - COGS R1/R2/R3 = each product's unit COGS
+    """
+    prods = products[:3]  # Max 3 ranges
+    n = len(prods)
+
+    # Build per_year by aggregating across years
+    all_years = set()
+    for p in prods:
+        for pa in p.get("par_annee", []):
+            label = pa.get("annee", "")
+            yk = YEAR_LABEL_MAP.get(label)
+            if yk:
+                all_years.add(yk)
+
+    per_year = {}
+    for yk in all_years:
+        # Collect data for each product at this year
+        prod_data = []
+        for p in prods:
+            pa = next((a for a in p.get("par_annee", []) if YEAR_LABEL_MAP.get(a.get("annee")) == yk), None)
+            if pa:
+                prod_data.append(pa)
+            else:
+                prod_data.append({})
+
+        # Total volume = sum
+        total_vol = sum(pd.get("volume", 0) or 0 for pd in prod_data)
+        total_ca = sum((pd.get("prix_r1", 0) or 0) * (pd.get("volume", 0) or 0) for pd in prod_data)
+
+        # Mix = CA share of each product
+        mix = [0.0] * 3
+        for i, pd in enumerate(prod_data):
+            ca_i = (pd.get("prix_r1", 0) or 0) * (pd.get("volume", 0) or 0)
+            mix[i] = ca_i / total_ca if total_ca > 0 else (1.0 if i == 0 else 0.0)
+
+        # Quarters — aggregate
+        q1 = sum(pd.get("volume_q1", 0) or 0 for pd in prod_data)
+        q2 = sum(pd.get("volume_q2", 0) or 0 for pd in prod_data)
+        q3 = sum(pd.get("volume_q3", 0) or 0 for pd in prod_data)
+        q4 = sum(pd.get("volume_q4", 0) or 0 for pd in prod_data)
+        if q1 + q2 + q3 + q4 == 0 and total_vol > 0:
+            q1 = round(total_vol * 0.22)
+            q2 = round(total_vol * 0.25)
+            q3 = round(total_vol * 0.27)
+            q4 = total_vol - q1 - q2 - q3
+
+        year_entry = {
+            "unit_price_r1": prod_data[0].get("prix_r1", 0) if n > 0 else 0,
+            "unit_price_r2": prod_data[1].get("prix_r1", 0) if n > 1 else 0,
+            "unit_price_r3": prod_data[2].get("prix_r1", 0) if n > 2 else 0,
+            "mix_r1": round(mix[0], 4),
+            "mix_r2": round(mix[1], 4) if n > 1 else 0,
+            "mix_r3": round(mix[2], 4) if n > 2 else 0,
+            "cogs_r1": prod_data[0].get("cogs_r1", 0) if n > 0 else 0,
+            "cogs_r2": prod_data[1].get("cogs_r1", 0) if n > 1 else 0,
+            "cogs_r3": prod_data[2].get("cogs_r1", 0) if n > 2 else 0,
+            "mix_r1_ch1": prod_data[0].get("mix_ch1", 0.5) if n > 0 else 1.0,
+            "mix_r2_ch1": prod_data[1].get("mix_ch1", 0.5) if n > 1 else 1.0,
+            "mix_r3_ch1": prod_data[2].get("mix_ch1", 0.5) if n > 2 else 1.0,
+            "q1": q1, "volume_q1": q1,
+            "q2": q2, "volume_q2": q2,
+            "q3": q3, "volume_q3": q3,
+            "q4": q4, "volume_q4": q4,
+            "volume_h1": q1 + q2,
+            "volume_h2": q3 + q4,
+            "volume_total": total_vol,
+            "total": total_vol,
+        }
+        per_year[yk] = year_entry
+
+        # H1/H2 for current year
+        if yk == "current_year":
+            h1_vol = q1 + q2
+            h2_vol = q3 + q4
+            per_year["h1"] = {**year_entry, "q1": h1_vol, "volume_q1": h1_vol, "q2": 0, "volume_q2": 0,
+                              "volume_h1": h1_vol, "volume_h2": 0, "volume_total": h1_vol, "total": h1_vol}
+            per_year["h2"] = {**year_entry, "q1": h2_vol, "volume_q1": h2_vol, "q2": 0, "volume_q2": 0,
+                              "volume_h1": h2_vol, "volume_h2": 0, "volume_total": h2_vol, "total": h2_vol}
+
+    # Range flags: activate as many ranges as products
+    range_flags = [1 if i < n else 0 for i in range(3)]
+
+    return {
+        "name": " + ".join(p.get("nom", "Produit") for p in prods),
+        "active": True,
+        "range_flags": range_flags,
+        "channel_flags": [1, 1] if n > 0 else [0, 1],
+        "per_year": per_year,
+    }
+
+
 def _convert_product(p):
     """Convert a single produit (v2) to product (v1)."""
     product = {
@@ -285,10 +383,29 @@ def adapt_plan_financier(data: dict) -> dict:
             result[key] = data[key]
 
     # ── Products ──
-    result["products"] = [_convert_product(p) for p in data.get("produits", [])]
+    # Template design: Product 1 is the ONLY slot with yellow volume cells.
+    # Products 2+ have formulas. We aggregate all products into Product 1
+    # using R1/R2/R3 as different product types with mix ratios.
+    raw_products = data.get("produits", [])
+    raw_services = data.get("services", [])
+
+    if raw_products:
+        aggregated = _aggregate_products_into_slot1(raw_products)
+        result["products"] = [aggregated]
+        # Keep product names in slots 2+ for display (no volume data needed)
+        for i, p in enumerate(raw_products[1:], start=1):
+            result["products"].append({
+                "name": p.get("nom", f"Produit {i+1}"),
+                "active": True,
+                "range_flags": [1, 0, 0],
+                "channel_flags": [0, 1],
+                "per_year": {},  # Empty — formulas handle it
+            })
+    else:
+        result["products"] = []
 
     # ── Services ──
-    result["services"] = [_convert_product(s) for s in data.get("services", [])]
+    result["services"] = [_convert_product(s) for s in raw_services]
 
     # ── Staff ──
     result["staff"] = [_convert_staff(s) for s in data.get("staff", [])]
