@@ -24,7 +24,10 @@ from fastapi import HTTPException, Header, Request
 from fastapi.responses import Response
 import openpyxl
 
-from plan_financier_adapter import adapt_plan_financier
+try:
+    from plan_financier_adapter import adapt_plan_financier
+except ImportError:
+    adapt_plan_financier = None
 
 
 # Product block = 16 rows (8 volume + 8 revenue calc)
@@ -139,7 +142,7 @@ def wfr(ws, row, d, skip_s=True):
 
 def fill_ovo(wb, data):
     # ── Auto-detect and convert v2 (plan_financier unifié) format ──
-    if "produits" in data:
+    if "produits" in data and adapt_plan_financier:
         print("[fill_ovo] Detected plan_financier v2 format — converting via adapter")
         data = adapt_plan_financier(data)
 
