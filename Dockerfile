@@ -16,10 +16,6 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY main.py .
-COPY ovo_excel.py .
-COPY odd_excel.py .
-COPY memo_pptx.py .
-COPY plan_financier_adapter.py .
+COPY *.py .
 EXPOSE 8000
 CMD ["python", "main.py"]
