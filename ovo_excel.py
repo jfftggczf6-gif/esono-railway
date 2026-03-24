@@ -68,7 +68,9 @@ SAFE_COLS = {"year_minus_2":"O","year_minus_1":"P","h1":"Q","h2":"R",
              "year2":"T","year3":"U","year4":"V","year5":"W","year6":"X"}
 
 # Revenue year offsets within a product block (0-7)
-REV_OFFSETS = {"year_minus_2":0,"year_minus_1":1,"current_year":2,"year2":4,"year3":5,"year4":6,"year5":7}
+# Row offsets within a 16-row product block (rows 9-16 for Product 1):
+# 0=Y-2, 1=Y-1, 2=CY, 3=Y+1(YEAR2), 4=Y+2(YEAR3), 5=Y+3(YEAR4), 6=Y+4(YEAR5), 7=Y+5(YEAR6)
+REV_OFFSETS = {"year_minus_2":0,"year_minus_1":1,"current_year":2,"year2":3,"year3":4,"year4":5,"year5":6,"year6":7}
 
 # Deno expander uses these keys in per_year arrays
 DENO_YEAR_MAP = {
@@ -367,8 +369,9 @@ def fill_ovo(wb, data):
             sw(rev,r,"W",yr.get("mix_r1_ch1",1.0))
             sw(rev,r,"X",yr.get("mix_r2_ch1",1.0))
             sw(rev,r,"Y",yr.get("mix_r3_ch1",1.0))
-            # Volumes — only for Product 1 (yellow cells). Products 2+ are formula-based.
-            if off <= 2:
+            # Volumes — offsets 0-3 (Y-2,Y-1,CY,Y+1): yellow AE-AH quarterly inputs
+            #           offsets 4-7 (Y+2..Y+5): yellow AI total, AE-AH are formulas (=AI/4)
+            if off <= 3:
                 sw(rev,r,"AE",round(yr.get("q1",yr.get("volume_q1",yr.get("volume_h1",0)))))
                 sw(rev,r,"AF",round(yr.get("q2",yr.get("volume_q2",yr.get("volume_h2",0)))))
                 sw(rev,r,"AG",round(yr.get("q3",yr.get("volume_q3",0))))
