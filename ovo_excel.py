@@ -24,6 +24,8 @@ from fastapi import HTTPException, Header, Request
 from fastapi.responses import Response
 import openpyxl
 
+from plan_financier_adapter import adapt_plan_financier
+
 
 # Product block = 16 rows (8 volume + 8 revenue calc)
 PRODUCT_BLOCK = 16
@@ -136,6 +138,11 @@ def wfr(ws, row, d, skip_s=True):
 
 
 def fill_ovo(wb, data):
+    # ── Auto-detect and convert v2 (plan_financier unifié) format ──
+    if "produits" in data:
+        print("[fill_ovo] Detected plan_financier v2 format — converting via adapter")
+        data = adapt_plan_financier(data)
+
     # ── Safety: recursively ensure all nested objects are dicts where expected ──
     def safe_dict(val):
         """Convert to dict if not already. Single-element list [{...}] → unwrap."""
