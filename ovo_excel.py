@@ -535,6 +535,9 @@ def fill_ovo(wb, data):
     sw(fin,807,"S",fam.get("interest_h1_current_year",0))
     sw(fin,816,"S",bnk.get("interest_h1_current_year",0))
 
+    # Force Excel to recalculate all formulas on open
+    wb.calculation = openpyxl.workbook.properties.CalcProperties(fullCalcOnLoad=True)
+
     return wb
 
 
