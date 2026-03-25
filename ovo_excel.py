@@ -234,20 +234,23 @@ def fill_ovo(wb, data):
     sw(inp, 18,"J", data.get("tax_regime_2",0.25))
 
     # ── Section 2: Years ──
-    # J24 = Y-2 (yellow input). J25-J33 are formulas (=J24+1, etc.) but openpyxl
-    # loses them on save. Write all year values explicitly.
+    # J25-J33 are formulas → must force-write to override them
+    def fw(ws, row, col, value):
+        """Force write: overwrite even formulas."""
+        ws[f"{col}{row}"].value = value
+
     yrs = data.get("years", {})
     ym2 = yrs.get("year_minus_2", 2022)
-    sw(inp, 24, "J", ym2)
-    sw(inp, 25, "J", ym2 + 1)       # Y-1
-    sw(inp, 26, "J", ym2 + 2)       # H1 (= CY)
-    sw(inp, 27, "J", ym2 + 2)       # H2 (= CY)
-    sw(inp, 28, "J", ym2 + 2)       # CY
-    sw(inp, 29, "J", ym2 + 3)       # Y+1
-    sw(inp, 30, "J", ym2 + 4)       # Y+2
-    sw(inp, 31, "J", ym2 + 5)       # Y+3
-    sw(inp, 32, "J", ym2 + 6)       # Y+4
-    sw(inp, 33, "J", ym2 + 7)       # Y+5
+    fw(inp, 24, "J", ym2)
+    fw(inp, 25, "J", ym2 + 1)       # Y-1
+    fw(inp, 26, "J", ym2 + 2)       # H1 (= CY)
+    fw(inp, 27, "J", ym2 + 2)       # H2 (= CY)
+    fw(inp, 28, "J", ym2 + 2)       # CY
+    fw(inp, 29, "J", ym2 + 3)       # Y+1
+    fw(inp, 30, "J", ym2 + 4)       # Y+2
+    fw(inp, 31, "J", ym2 + 5)       # Y+3
+    fw(inp, 32, "J", ym2 + 6)       # Y+4
+    fw(inp, 33, "J", ym2 + 7)       # Y+5
 
     # ── Section 3: Products (36-55) ──
     prods = data.get("products",[])
