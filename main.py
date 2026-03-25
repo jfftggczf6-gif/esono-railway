@@ -686,6 +686,9 @@ async def generate_pdf(request: Request, authorization: Optional[str] = Header(N
 from ovo_excel import register_excel_endpoints
 register_excel_endpoints(app)
 
+from cell_filler import register_cell_filler
+register_cell_filler(app)
+
 from odd_excel import register_odd_endpoints
 register_odd_endpoints(app)
 
