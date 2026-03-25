@@ -383,29 +383,16 @@ def adapt_plan_financier(data: dict) -> dict:
             result[key] = data[key]
 
     # ── Products ──
-    # Template design: Product 1 is the ONLY slot with yellow volume cells.
-    # Products 2+ have formulas. We aggregate all products into Product 1
-    # using R1/R2/R3 as different product types with mix ratios.
+    # Each product gets its OWN slot (Product 1, 2, 3, ...).
+    # fill_ovo uses force-write (fw) for volumes of Products 2+
+    # to override template formulas.
     raw_products = data.get("produits", [])
     raw_services = data.get("services", [])
 
-    if raw_products:
-        aggregated = _aggregate_products_into_slot1(raw_products)
-        result["products"] = [aggregated]
-        # Keep product names in slots 2+ for display (no volume data needed)
-        for i, p in enumerate(raw_products[1:], start=1):
-            result["products"].append({
-                "name": p.get("nom", f"Produit {i+1}"),
-                "active": True,
-                "range_flags": [1, 0, 0],
-                "channel_flags": [0, 1],
-                "per_year": {},  # Empty — formulas handle it
-            })
-    else:
-        result["products"] = []
+    result["products"] = [_convert_product(p) for p in raw_products[:20]]
 
     # ── Services ──
-    result["services"] = [_convert_product(s) for s in raw_services]
+    result["services"] = [_convert_product(s) for s in raw_services[:10]]
 
     # ── Staff ──
     result["staff"] = [_convert_staff(s) for s in data.get("staff", [])]

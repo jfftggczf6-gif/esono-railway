@@ -339,11 +339,13 @@ def fill_ovo(wb, data):
             if s.get("best") is not None: sw(inp,r,"J",s["best"])
 
     # ═══ RevenueData: Products ═══
-    # Template design: only Product 1 (rows 9-16) has yellow input cells for volumes.
-    # Products 2+ have formulas that derive from Product 1 via range/channel mix.
-    # We fill ONLY Product 1 with AGGREGATED volumes (all products combined),
-    # and use price_r1/r2/r3 + mix to distribute across ranges.
-    def fill_rev_item(base_row, item, is_first_product=False):
+    # Each product gets its own slot. Products 2+ have formulas in the template
+    # that we FORCE-OVERWRITE with actual data using fw().
+    def fw(ws, row, col, value):
+        """Force write: overwrite even formulas."""
+        ws[f"{col}{row}"].value = value
+
+    def fill_rev_item(base_row, item):
         py = normalize_per_year(item.get("per_year", {}))
         active = item.get("active", True)
         for yk, off in REV_OFFSETS.items():
@@ -351,33 +353,32 @@ def fill_ovo(wb, data):
             yr = py.get(yk,{})
             if not active:
                 for c in ["L","M","N","P","Q","S","T","U","W","X","Y","AE","AF","AG","AH"]:
-                    sw(rev,r,c,0)
-                if off >= 4: sw(rev,r,"AI",0)
+                    fw(rev,r,c,0)
+                if off >= 4: fw(rev,r,"AI",0)
                 continue
-            # Prices — only yellow cells (Product 1 rows are yellow, Products 2+ have formulas)
-            sw(rev,r,"L",yr.get("unit_price_r1",0))
-            sw(rev,r,"M",yr.get("unit_price_r2",0))
-            sw(rev,r,"N",yr.get("unit_price_r3",0))
-            # Mix volume (P,Q only — R=formula)
-            sw(rev,r,"P",yr.get("mix_r1",1.0))
-            sw(rev,r,"Q",yr.get("mix_r2",0))
+            # Prices (force write for Products 2+)
+            fw(rev,r,"L",yr.get("unit_price_r1",0))
+            fw(rev,r,"M",yr.get("unit_price_r2",0))
+            fw(rev,r,"N",yr.get("unit_price_r3",0))
+            # Mix volume
+            fw(rev,r,"P",yr.get("mix_r1",1.0))
+            fw(rev,r,"Q",yr.get("mix_r2",0))
             # COGS
-            sw(rev,r,"S",yr.get("cogs_r1",0))
-            sw(rev,r,"T",yr.get("cogs_r2",0))
-            sw(rev,r,"U",yr.get("cogs_r3",0))
-            # Channel mix (W,X,Y only — Z,AA,AB=formula)
-            sw(rev,r,"W",yr.get("mix_r1_ch1",1.0))
-            sw(rev,r,"X",yr.get("mix_r2_ch1",1.0))
-            sw(rev,r,"Y",yr.get("mix_r3_ch1",1.0))
-            # Volumes — offsets 0-3 (Y-2,Y-1,CY,Y+1): yellow AE-AH quarterly inputs
-            #           offsets 4-7 (Y+2..Y+5): yellow AI total, AE-AH are formulas (=AI/4)
+            fw(rev,r,"S",yr.get("cogs_r1",0))
+            fw(rev,r,"T",yr.get("cogs_r2",0))
+            fw(rev,r,"U",yr.get("cogs_r3",0))
+            # Channel mix
+            fw(rev,r,"W",yr.get("mix_r1_ch1",1.0))
+            fw(rev,r,"X",yr.get("mix_r2_ch1",1.0))
+            fw(rev,r,"Y",yr.get("mix_r3_ch1",1.0))
+            # Volumes — force write all (Products 2+ have formulas)
             if off <= 3:
-                sw(rev,r,"AE",round(yr.get("q1",yr.get("volume_q1",yr.get("volume_h1",0)))))
-                sw(rev,r,"AF",round(yr.get("q2",yr.get("volume_q2",yr.get("volume_h2",0)))))
-                sw(rev,r,"AG",round(yr.get("q3",yr.get("volume_q3",0))))
-                sw(rev,r,"AH",round(yr.get("q4",yr.get("volume_q4",0))))
+                fw(rev,r,"AE",round(yr.get("q1",yr.get("volume_q1",yr.get("volume_h1",0)))))
+                fw(rev,r,"AF",round(yr.get("q2",yr.get("volume_q2",yr.get("volume_h2",0)))))
+                fw(rev,r,"AG",round(yr.get("q3",yr.get("volume_q3",0))))
+                fw(rev,r,"AH",round(yr.get("q4",yr.get("volume_q4",0))))
             else:
-                sw(rev,r,"AI",round(yr.get("total",yr.get("volume_total",0))))
+                fw(rev,r,"AI",round(yr.get("total",yr.get("volume_total",0))))
 
     for i,p in enumerate(prods[:20]):
         fill_rev_item(PRODUCT_VOL_START + i*PRODUCT_BLOCK, p)
