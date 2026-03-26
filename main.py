@@ -16,11 +16,11 @@ import uvicorn
 
 app = FastAPI(title="ESONO Document Parser", version="1.0.0")
 
-# CORS — allow Lovable frontend
+# CORS — allow Lovable frontend (all origins including preview domains)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, restrict to your Lovable domain
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,  # credentials=True is incompatible with allow_origins=["*"]
     allow_methods=["*"],
     allow_headers=["*"],
 )
