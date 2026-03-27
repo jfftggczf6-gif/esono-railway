@@ -384,6 +384,13 @@ def fill_ovo(wb, data):
                 fw(rev,r,"AI",round(yr.get("total",yr.get("volume_total",0))))
 
     for i,p in enumerate(prods[:20]):
+        py_keys = list(p.get("per_year", {}).keys()) if isinstance(p.get("per_year"), dict) else []
+        print(f"[fill_ovo] Product {i+1} '{p.get('name','?')[:30]}': per_year keys={py_keys}, active={p.get('active',True)}")
+        for yk in ["year2","year3","year4","year5","year6"]:
+            yr = p.get("per_year",{}).get(yk,{})
+            vol = yr.get("total", yr.get("volume_total", 0)) if isinstance(yr, dict) else 0
+            price = yr.get("unit_price_r1", 0) if isinstance(yr, dict) else 0
+            print(f"  {yk}: vol={vol}, price={price}")
         fill_rev_item(PRODUCT_VOL_START + i*PRODUCT_BLOCK, p)
     for i,s in enumerate(svcs[:10]):
         fill_rev_item(SERVICE_VOL_START + i*PRODUCT_BLOCK, s)
