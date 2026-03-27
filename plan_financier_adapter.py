@@ -160,6 +160,10 @@ def _aggregate_products_into_slot1(products):
 
 def _convert_product(p):
     """Convert a single produit (v2) to product (v1)."""
+    # Fallback price from product-level fields
+    fallback_price = p.get("prix_unitaire", 0) or 0
+    fallback_cogs = p.get("cout_unitaire", 0) or 0
+
     product = {
         "name": p.get("nom", "Produit"),
         "active": True,
@@ -180,14 +184,31 @@ def _convert_product(p):
         q3 = yr_data.get("volume_q3", 0) or round(vol_total * 0.27)
         q4 = yr_data.get("volume_q4", 0) or (vol_total - q1 - q2 - q3)
 
+        # Use per-year price, fallback to product-level price, fallback to CA/volume
+        prix_r1 = yr_data.get("prix_r1", 0) or 0
+        if prix_r1 == 0 and fallback_price > 0:
+            prix_r1 = fallback_price
+        if prix_r1 == 0 and vol_total > 0:
+            ca = yr_data.get("ca", 0) or 0
+            if ca > 0:
+                prix_r1 = round(ca / vol_total)
+
+        cogs_r1 = yr_data.get("cogs_r1", 0) or 0
+        if cogs_r1 == 0 and fallback_cogs > 0:
+            cogs_r1 = fallback_cogs
+        if cogs_r1 == 0 and vol_total > 0:
+            cogs_total = yr_data.get("cogs_total", 0) or 0
+            if cogs_total > 0:
+                cogs_r1 = round(cogs_total / vol_total)
+
         year_entry = {
-            "unit_price_r1": yr_data.get("prix_r1", 0),
+            "unit_price_r1": prix_r1,
             "unit_price_r2": yr_data.get("prix_r2", 0),
             "unit_price_r3": yr_data.get("prix_r3", 0),
             "mix_r1": yr_data.get("mix_r1", 1.0),
             "mix_r2": yr_data.get("mix_r2", 0),
             "mix_r3": yr_data.get("mix_r3", 0),
-            "cogs_r1": yr_data.get("cogs_r1", 0),
+            "cogs_r1": cogs_r1,
             "cogs_r2": yr_data.get("cogs_r2", 0),
             "cogs_r3": yr_data.get("cogs_r3", 0),
             "mix_r1_ch1": yr_data.get("mix_ch1", 1.0),
