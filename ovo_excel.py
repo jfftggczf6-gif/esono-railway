@@ -575,12 +575,14 @@ def register_excel_endpoints(app):
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Invalid template: {e}")
 
-        np = len(data.get("products",[]))
-        ns = len(data.get("services",[]))
-        print(f"[ovo-excel] {np} products, {ns} services")
+        # Use new filler (reads plan_financier JSON directly)
+        np = len(data.get("produits", data.get("products", [])))
+        ns = len(data.get("services", []))
+        print(f"[ovo-excel] v2 filler: {np} produits, {ns} services")
 
         try:
-            wb = fill_ovo(wb, data)
+            from ovo_filler import fill_plan_financier
+            wb = fill_plan_financier(wb, data)
         except Exception as e:
             import traceback
             print(f"[ovo-excel] Error: {traceback.format_exc()}")
