@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y \
     libgobject-2.0-0 \
     libharfbuzz0b \
     fonts-dejavu-core \
+    libreoffice-nogui \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY requirements.txt .

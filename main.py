@@ -270,11 +270,45 @@ def parse_excel(file_bytes: bytes, filename: str) -> dict:
 
 # ═══════════════════════════════════════════════════════════════
 # WORD PARSING — python-docx (preserves tables and structure)
+# Supports both .docx and .doc (legacy, converted via LibreOffice)
 # ═══════════════════════════════════════════════════════════════
+def convert_doc_to_docx(file_bytes: bytes) -> bytes:
+    """Convert legacy .doc to .docx using LibreOffice CLI."""
+    import subprocess, tempfile, os
+    with tempfile.TemporaryDirectory() as tmpdir:
+        doc_path = os.path.join(tmpdir, "input.doc")
+        with open(doc_path, "wb") as f:
+            f.write(file_bytes)
+        subprocess.run(
+            ["libreoffice", "--headless", "--convert-to", "docx", "--outdir", tmpdir, doc_path],
+            capture_output=True, timeout=60
+        )
+        docx_path = os.path.join(tmpdir, "input.docx")
+        if not os.path.exists(docx_path):
+            raise ValueError("LibreOffice conversion failed — .doc to .docx")
+        with open(docx_path, "rb") as f:
+            return f.read()
+
 def parse_docx(file_bytes: bytes, filename: str) -> dict:
     """Parse Word: text + tables + headers preserved."""
     from docx import Document
-    
+
+    # If legacy .doc format, convert to .docx first
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if ext == "doc":
+        try:
+            print(f"[parser] Converting .doc to .docx: {filename}")
+            file_bytes = convert_doc_to_docx(file_bytes)
+            print(f"[parser] Conversion OK: {filename}")
+        except Exception as e:
+            print(f"[parser] .doc conversion failed: {e}")
+            return {
+                "content": f"[Erreur: impossible de convertir le fichier .doc '{filename}'. Veuillez le sauvegarder en .docx]",
+                "tables_found": 0,
+                "quality": "failed",
+                "method": "libreoffice-failed",
+            }
+
     doc = Document(io.BytesIO(file_bytes))
     
     full_text = ""
