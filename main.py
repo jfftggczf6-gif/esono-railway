@@ -369,10 +369,43 @@ def parse_docx(file_bytes: bytes, filename: str) -> dict:
 # ═══════════════════════════════════════════════════════════════
 # POWERPOINT PARSING — python-pptx
 # ═══════════════════════════════════════════════════════════════
+def convert_ppt_to_pptx(file_bytes: bytes) -> bytes:
+    """Convert legacy .ppt to .pptx using LibreOffice CLI."""
+    import subprocess, tempfile, os
+    with tempfile.TemporaryDirectory() as tmpdir:
+        ppt_path = os.path.join(tmpdir, "input.ppt")
+        with open(ppt_path, "wb") as f:
+            f.write(file_bytes)
+        subprocess.run(
+            ["libreoffice", "--headless", "--convert-to", "pptx", "--outdir", tmpdir, ppt_path],
+            capture_output=True, timeout=60
+        )
+        pptx_path = os.path.join(tmpdir, "input.pptx")
+        if not os.path.exists(pptx_path):
+            raise ValueError("LibreOffice conversion failed — .ppt to .pptx")
+        with open(pptx_path, "rb") as f:
+            return f.read()
+
 def parse_pptx(file_bytes: bytes, filename: str) -> dict:
     """Parse PowerPoint: text from each slide + tables."""
     from pptx import Presentation
-    
+
+    # If legacy .ppt format, convert first
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if ext == "ppt":
+        try:
+            print(f"[parser] Converting .ppt to .pptx: {filename}")
+            file_bytes = convert_ppt_to_pptx(file_bytes)
+            print(f"[parser] Conversion OK: {filename}")
+        except Exception as e:
+            print(f"[parser] .ppt conversion failed: {e}")
+            return {
+                "content": f"[Erreur: impossible de convertir le fichier .ppt '{filename}'. Veuillez le sauvegarder en .pptx]",
+                "slides": 0,
+                "quality": "failed",
+                "method": "libreoffice-failed",
+            }
+
     prs = Presentation(io.BytesIO(file_bytes))
     
     full_text = ""
