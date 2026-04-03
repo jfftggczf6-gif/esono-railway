@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-ARG CACHE_BUST=v1.5.1
+ARG CACHE_BUST=v1.5.2
 COPY . .
 EXPOSE 8000
 CMD ["python", "main.py"]

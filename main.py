@@ -279,13 +279,20 @@ def convert_doc_to_docx(file_bytes: bytes) -> bytes:
         doc_path = os.path.join(tmpdir, "input.doc")
         with open(doc_path, "wb") as f:
             f.write(file_bytes)
-        subprocess.run(
-            ["libreoffice", "--headless", "--convert-to", "docx", "--outdir", tmpdir, doc_path],
+        profile_dir = os.path.join(tmpdir, "lo_profile")
+        result = subprocess.run(
+            ["libreoffice", "--headless", f"-env:UserInstallation=file://{profile_dir}", "--convert-to", "docx", "--outdir", tmpdir, doc_path],
             capture_output=True, timeout=60
         )
+        print(f"[libreoffice] doc->docx returncode={result.returncode} stderr={result.stderr.decode()[:200]}")
         docx_path = os.path.join(tmpdir, "input.docx")
         if not os.path.exists(docx_path):
-            raise ValueError("LibreOffice conversion failed — .doc to .docx")
+            for f_name in os.listdir(tmpdir):
+                if f_name.endswith('.docx'):
+                    docx_path = os.path.join(tmpdir, f_name)
+                    break
+        if not os.path.exists(docx_path):
+            raise ValueError(f"LibreOffice conversion failed — .doc to .docx (rc={result.returncode})")
         with open(docx_path, "rb") as f:
             return f.read()
 
@@ -376,13 +383,22 @@ def convert_ppt_to_pptx(file_bytes: bytes) -> bytes:
         ppt_path = os.path.join(tmpdir, "input.ppt")
         with open(ppt_path, "wb") as f:
             f.write(file_bytes)
-        subprocess.run(
-            ["libreoffice", "--headless", "--convert-to", "pptx", "--outdir", tmpdir, ppt_path],
+        # Use unique user profile to avoid lock conflicts
+        profile_dir = os.path.join(tmpdir, "lo_profile")
+        result = subprocess.run(
+            ["libreoffice", "--headless", f"-env:UserInstallation=file://{profile_dir}", "--convert-to", "pptx", "--outdir", tmpdir, ppt_path],
             capture_output=True, timeout=60
         )
+        print(f"[libreoffice] ppt->pptx returncode={result.returncode} stderr={result.stderr.decode()[:200]}")
         pptx_path = os.path.join(tmpdir, "input.pptx")
         if not os.path.exists(pptx_path):
-            raise ValueError("LibreOffice conversion failed — .ppt to .pptx")
+            # Try alternative output name
+            for f_name in os.listdir(tmpdir):
+                if f_name.endswith('.pptx'):
+                    pptx_path = os.path.join(tmpdir, f_name)
+                    break
+        if not os.path.exists(pptx_path):
+            raise ValueError(f"LibreOffice conversion failed — .ppt to .pptx (rc={result.returncode})")
         with open(pptx_path, "rb") as f:
             return f.read()
 
@@ -714,7 +730,7 @@ async def parse_document(
 @app.get("/health")
 async def health():
     """Health check endpoint."""
-    return {"status": "ok", "version": "1.4.0", "features": ["parse", "ovo-excel", "odd-excel", "memo-pptx", "pdf-export"]}
+    return {"status": "ok", "version": "1.5.2", "features": ["parse", "ovo-excel", "odd-excel", "memo-pptx", "pdf-export"]}
 
 
 # ── PDF Export endpoint (WeasyPrint) ──
