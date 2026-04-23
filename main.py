@@ -141,14 +141,24 @@ def parse_pdf_ocr(file_bytes: bytes, filename: str) -> dict:
     
     text_len = len(full_text.strip())
     quality = "high" if text_len > 500 else "medium" if text_len > 100 else "low" if text_len > 0 else "failed"
-    
-    return {
+
+    tesseract_result = {
         "content": full_text[:MAX_CHARS_PER_FILE],
         "pages": total_pages,
         "tables_found": 0,
         "quality": quality,
         "method": "tesseract_ocr",
     }
+
+    # Fallback Claude : PDF scanné avec texte illisible par Tesseract (manuscrit, tableaux serrés, flou)
+    if quality in ("low", "failed"):
+        print(f"[parser] PDF {filename} Tesseract poor ({text_len} chars), trying Claude vision...")
+        claude_result = parse_pdf_via_claude(file_bytes, filename)
+        if claude_result and len(claude_result["content"]) > text_len:
+            claude_result["pages"] = total_pages
+            return claude_result
+
+    return tesseract_result
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -476,30 +486,146 @@ def parse_pptx(file_bytes: bytes, filename: str) -> dict:
 
 
 # ═══════════════════════════════════════════════════════════════
-# IMAGE OCR — Tesseract (free, no API needed)
+# CLAUDE VISION FALLBACK — pour manuscrit, scans dégradés, tableaux complexes
+# ═══════════════════════════════════════════════════════════════
+CLAUDE_OCR_PROMPT = (
+    "Extrait TOUT le texte visible dans ce document — imprimé, manuscrit, "
+    "tableaux, chiffres, annotations. Rends le texte exactement tel qu'il "
+    "apparaît, sans interprétation ni résumé. Préserve l'ordre de lecture "
+    "(haut→bas, gauche→droite). Pour les tableaux, utilise le format markdown. "
+    "Pour les caractères illisibles, écris [?]. Pour les sommes/chiffres "
+    "importants, double-vérifie la valeur avant d'écrire. Ne commente pas, "
+    "ne résume pas, ne traduis pas."
+)
+
+def _get_anthropic_client():
+    """Return a configured Anthropic client, or None if no key."""
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        return None
+    try:
+        import anthropic
+        return anthropic.Anthropic(api_key=api_key, timeout=60.0)
+    except Exception as e:
+        print(f"[claude-fallback] anthropic SDK not available: {e}")
+        return None
+
+
+def parse_image_via_claude(file_bytes: bytes, filename: str) -> Optional[dict]:
+    """OCR via Claude vision — bien meilleur que Tesseract sur le manuscrit."""
+    import base64
+    client = _get_anthropic_client()
+    if client is None:
+        return None
+
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "jpg"
+    media_type = {
+        "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+        "webp": "image/webp", "gif": "image/gif",
+    }.get(ext, "image/jpeg")
+
+    try:
+        b64 = base64.b64encode(file_bytes).decode("ascii")
+        resp = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=4096,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "image", "source": {
+                        "type": "base64", "media_type": media_type, "data": b64,
+                    }},
+                    {"type": "text", "text": CLAUDE_OCR_PROMPT},
+                ],
+            }],
+        )
+        text = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text").strip()
+        text_len = len(text)
+        quality = "high" if text_len > 200 else "medium" if text_len > 30 else "low" if text_len > 0 else "failed"
+        print(f"[claude-fallback] OCR {filename}: {text_len} chars extracted")
+        return {
+            "content": text[:MAX_CHARS_PER_FILE],
+            "quality": quality,
+            "method": "claude_vision",
+        }
+    except Exception as e:
+        print(f"[claude-fallback] image OCR failed for {filename}: {e}")
+        return None
+
+
+def parse_pdf_via_claude(file_bytes: bytes, filename: str) -> Optional[dict]:
+    """OCR PDF scanné via Claude vision (supporte natif PDF, 100 pages / 32MB)."""
+    import base64
+    client = _get_anthropic_client()
+    if client is None:
+        return None
+
+    # Claude PDF limits: 32 MB, 100 pages
+    if len(file_bytes) > 30 * 1024 * 1024:
+        print(f"[claude-fallback] PDF {filename} too large for Claude, skipping ({len(file_bytes) // 1024 // 1024} MB)")
+        return None
+
+    try:
+        b64 = base64.b64encode(file_bytes).decode("ascii")
+        resp = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=8192,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "document", "source": {
+                        "type": "base64", "media_type": "application/pdf", "data": b64,
+                    }},
+                    {"type": "text", "text": CLAUDE_OCR_PROMPT},
+                ],
+            }],
+        )
+        text = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text").strip()
+        text_len = len(text)
+        quality = "high" if text_len > 500 else "medium" if text_len > 100 else "low" if text_len > 0 else "failed"
+        print(f"[claude-fallback] PDF OCR {filename}: {text_len} chars extracted")
+        return {
+            "content": text[:MAX_CHARS_PER_FILE],
+            "pages": None,
+            "tables_found": 0,
+            "quality": quality,
+            "method": "claude_vision_pdf",
+        }
+    except Exception as e:
+        print(f"[claude-fallback] PDF OCR failed for {filename}: {e}")
+        return None
+
+
+# ═══════════════════════════════════════════════════════════════
+# IMAGE OCR — Tesseract (gratuit) avec fallback Claude si qualité faible
 # ═══════════════════════════════════════════════════════════════
 def parse_image(file_bytes: bytes, filename: str) -> dict:
-    """OCR an image using Tesseract."""
+    """OCR une image via Tesseract, fallback Claude vision si manuscrit/scan dégradé."""
     from PIL import Image
     import pytesseract
-    
+
     img = Image.open(io.BytesIO(file_bytes))
-    
-    # Convert to RGB if needed
     if img.mode != "RGB":
         img = img.convert("RGB")
-    
-    # OCR with French + English
-    text = pytesseract.image_to_string(img, lang="fra+eng")
-    
-    text_len = len(text.strip())
+
+    text = pytesseract.image_to_string(img, lang="fra+eng").strip()
+    text_len = len(text)
     quality = "high" if text_len > 300 else "medium" if text_len > 50 else "low" if text_len > 0 else "failed"
-    
-    return {
-        "content": text.strip()[:MAX_CHARS_PER_FILE],
+
+    tesseract_result = {
+        "content": text[:MAX_CHARS_PER_FILE],
         "quality": quality,
         "method": "tesseract_ocr",
     }
+
+    # Fallback Claude si qualité faible : manuscrit, scan flou, petits caractères
+    if quality in ("low", "failed"):
+        print(f"[parser] image {filename} low quality ({text_len} chars), trying Claude vision...")
+        claude_result = parse_image_via_claude(file_bytes, filename)
+        if claude_result and len(claude_result["content"]) > text_len:
+            return claude_result
+
+    return tesseract_result
 
 
 # ═══════════════════════════════════════════════════════════════
