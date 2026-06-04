@@ -628,6 +628,66 @@ def _patch_currency_in_cell_values(wb, currency_iso: str) -> int:
     return patched
 
 
+def _clear_template_placeholders(wb) -> int:
+    """
+    Bug Aurélie #5 — Effacer les placeholders "FREE TEXT / TEXTE LIBRE / VRIJE
+    TEKST" laissés par le template OVO (ex: InputsData!H16, I16 sur la cellule
+    de description du régime fiscal). Ces placeholders sont laissés visibles
+    par le template d'origine quand aucune description spécifique n'a été
+    remplie par l'agent IA.
+
+    Returns the count of cells cleared.
+    """
+    PLACEHOLDERS = ('FREE TEXT', 'TEXTE LIBRE', 'VRIJE TEKST', 'TEXTE VRIJE')
+    cleared = 0
+    for sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+        for row in ws.iter_rows():
+            for cell in row:
+                v = cell.value
+                if not v or not isinstance(v, str):
+                    continue
+                up = v.upper().replace('\r', '').replace('\n', ' ')
+                # Considère la cellule comme placeholder si elle ne contient QUE les
+                # mots-clés placeholders (et de la ponctuation/espaces)
+                hits = sum(1 for p in PLACEHOLDERS if p in up)
+                if hits >= 2:  # au moins 2 langues mentionnées
+                    cell.value = None
+                    cleared += 1
+    return cleared
+
+
+def _relax_country_data_validation(wb) -> int:
+    """
+    Bug Aurélie #4 — Le template OVO a une Data Validation Excel sur la cellule
+    LAND (InputsData!J6) avec une liste fermée de pays UEMOA. Quand on saisit
+    "RDC", Excel rejette la valeur ("Non valide : la valeur d'entrée doit être
+    comprise dans la plage spécifiée").
+
+    Fix : on retire les Data Validations qui restreignent la cellule pays pour
+    accepter toute valeur. Approche prudente : on cible uniquement la feuille
+    InputsData et on supprime les validations dont l'opérateur est "list".
+
+    Returns the count of validations removed.
+    """
+    removed = 0
+    if 'InputsData' not in wb.sheetnames:
+        return 0
+    ws = wb['InputsData']
+    # openpyxl stocke les validations dans ws.data_validations
+    dvs = list(ws.data_validations.dataValidation) if hasattr(ws, 'data_validations') else []
+    keep = []
+    for dv in dvs:
+        # Retirer les data validations de type "list" qui restreignent dropdown
+        if dv.type == 'list':
+            removed += 1
+            continue
+        keep.append(dv)
+    # Recharger les validations conservées
+    ws.data_validations.dataValidation = keep
+    return removed
+
+
 def register_excel_endpoints(app):
     @app.post("/generate-ovo-excel")
     async def generate_ovo_excel(request: Request, authorization: Optional[str] = Header(None)):
@@ -672,7 +732,11 @@ def register_excel_endpoints(app):
         # Brief 0.24 — patch des cellules avec "FCFA" hardcoded dans number_format
         patched_cells = _patch_currency_formats(wb, currency_iso)
         patched_values = _patch_currency_in_cell_values(wb, currency_iso)
-        print(f"[ovo-excel] currency patched: {patched_cells} formats + {patched_values} values (target={currency_iso})")
+        # Bug Aurélie #5 — effacer placeholders FREE TEXT / TEXTE LIBRE / VRIJE TEKST
+        cleared_placeholders = _clear_template_placeholders(wb)
+        # Bug Aurélie #4 — assouplir Data Validation pays (RDC pas dans la liste)
+        relaxed_validations = _relax_country_data_validation(wb)
+        print(f"[ovo-excel] post-fill patches: {patched_cells} fmt + {patched_values} val + {cleared_placeholders} placeholders + {relaxed_validations} validations (target={currency_iso})")
 
         out = io.BytesIO()
         wb.save(out)
