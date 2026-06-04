@@ -592,6 +592,42 @@ def _patch_currency_formats(wb, currency_iso: str) -> int:
     return patched
 
 
+def _patch_currency_in_cell_values(wb, currency_iso: str) -> int:
+    """
+    Brief 0.24 extension — Patch les VALEURS texte des cellules qui contiennent
+    "F CFA" ou "FCFA" en plus du number_format. Cible les labels statiques
+    hérités du template UEMOA (ex: InputsData!I17 "REVENUS <= 200 M F CFA").
+
+    Skip pour XOF/FCFA (template d'origine déjà aligné).
+
+    Returns the count of cells patched.
+    """
+    if not currency_iso or currency_iso in ("FCFA", "XOF"):
+        return 0
+
+    # On remplace dans cet ordre : "F CFA" d'abord (plus long), puis "FCFA"
+    # pour éviter de double-patcher.
+    OLD_TOKENS = ['F CFA', 'FCFA']
+    NEW_TOKEN = currency_iso
+
+    patched = 0
+    for sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+        for row in ws.iter_rows():
+            for cell in row:
+                v = cell.value
+                if not v or not isinstance(v, str):
+                    continue
+                if 'F CFA' in v or 'FCFA' in v:
+                    new_v = v
+                    for tok in OLD_TOKENS:
+                        new_v = new_v.replace(tok, NEW_TOKEN)
+                    if new_v != v:
+                        cell.value = new_v
+                        patched += 1
+    return patched
+
+
 def register_excel_endpoints(app):
     @app.post("/generate-ovo-excel")
     async def generate_ovo_excel(request: Request, authorization: Optional[str] = Header(None)):
@@ -635,7 +671,8 @@ def register_excel_endpoints(app):
 
         # Brief 0.24 — patch des cellules avec "FCFA" hardcoded dans number_format
         patched_cells = _patch_currency_formats(wb, currency_iso)
-        print(f"[ovo-excel] currency format patched: {patched_cells} cells (target={currency_iso})")
+        patched_values = _patch_currency_in_cell_values(wb, currency_iso)
+        print(f"[ovo-excel] currency patched: {patched_cells} formats + {patched_values} values (target={currency_iso})")
 
         out = io.BytesIO()
         wb.save(out)
