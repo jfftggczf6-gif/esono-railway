@@ -555,6 +555,43 @@ def fill_ovo(wb, data):
     return wb
 
 
+def _patch_currency_formats(wb, currency_iso: str) -> int:
+    """
+    Brief 0.24 — Patch number_format on all cells that hardcode "FCFA" or "F CFA",
+    replacing with the active currency_iso (USD, MAD, KES, etc.).
+
+    The OVO template was originally built with `0 " FCFA"` and similar formats
+    written in dur. Without this patch, a Savoki RDC plan financier displays
+    "667 105 FCFA" in cells whose underlying values are USD.
+
+    Returns the count of cells patched.
+    """
+    if not currency_iso or currency_iso == "FCFA" or currency_iso == "XOF":
+        # No patch needed if already FCFA/XOF (default template currency)
+        return 0
+
+    # Token to look for and replace
+    OLD_TOKENS = ['"FCFA"', '"F CFA"', '" FCFA"', '" F CFA"']
+    NEW_TOKEN = f'" {currency_iso}"'
+
+    patched = 0
+    for sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+        for row in ws.iter_rows():
+            for cell in row:
+                fmt = cell.number_format
+                if not fmt or not isinstance(fmt, str):
+                    continue
+                if "FCFA" in fmt or "F CFA" in fmt:
+                    new_fmt = fmt
+                    for tok in OLD_TOKENS:
+                        new_fmt = new_fmt.replace(tok, NEW_TOKEN)
+                    if new_fmt != fmt:
+                        cell.number_format = new_fmt
+                        patched += 1
+    return patched
+
+
 def register_excel_endpoints(app):
     @app.post("/generate-ovo-excel")
     async def generate_ovo_excel(request: Request, authorization: Optional[str] = Header(None)):
@@ -566,6 +603,9 @@ def register_excel_endpoints(app):
         body = await request.json()
         data = body.get("data",{})
         t64 = body.get("template_base64")
+        # Brief 0.24 — la devise effective (USD, MAD, etc.). Fallback sur data.currency
+        # ou data.currency_iso pour rétro-compat.
+        currency_iso = body.get("currency_iso") or data.get("currency") or data.get("currency_iso") or "XOF"
         if not t64:
             raise HTTPException(status_code=400, detail="template_base64 required")
 
@@ -578,7 +618,12 @@ def register_excel_endpoints(app):
         # Use new filler (reads plan_financier JSON directly)
         np = len(data.get("produits", data.get("products", [])))
         ns = len(data.get("services", []))
-        print(f"[ovo-excel] v2 filler: {np} produits, {ns} services")
+        print(f"[ovo-excel] v2 filler: {np} produits, {ns} services, currency={currency_iso}")
+
+        # S'assurer que data.currency = currency_iso pour que le filler écrive
+        # la bonne valeur dans InputsData!J8
+        if data.get("currency") != currency_iso:
+            data["currency"] = currency_iso
 
         try:
             from ovo_filler import fill_plan_financier
@@ -587,6 +632,10 @@ def register_excel_endpoints(app):
             import traceback
             print(f"[ovo-excel] Error: {traceback.format_exc()}")
             raise HTTPException(status_code=500, detail=f"Fill error: {e}")
+
+        # Brief 0.24 — patch des cellules avec "FCFA" hardcoded dans number_format
+        patched_cells = _patch_currency_formats(wb, currency_iso)
+        print(f"[ovo-excel] currency format patched: {patched_cells} cells (target={currency_iso})")
 
         out = io.BytesIO()
         wb.save(out)
