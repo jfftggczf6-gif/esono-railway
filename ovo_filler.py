@@ -9,6 +9,7 @@ Target: 251022-PlanFinancierOVO-Template5Ans-v0210-EMPTY.xlsm
 """
 
 import openpyxl
+from openpyxl.comments import Comment
 from datetime import datetime
 import math
 
@@ -328,12 +329,26 @@ def fill_plan_financier(wb, data):
     fam_loan = loans.get("family", {})
     bnk_loan = loans.get("bank", {})
 
-    fw(inp, 125, "I", ovo_loan.get("rate", ovo_loan.get("interest_rate", 0.07)))
-    fw(inp, 125, "J", ovo_loan.get("term_years", ovo_loan.get("duration_years", 5)))
-    fw(inp, 126, "I", fam_loan.get("rate", fam_loan.get("interest_rate", 0.10)))
-    fw(inp, 126, "J", fam_loan.get("term_years", fam_loan.get("duration_years", 3)))
-    fw(inp, 127, "I", bnk_loan.get("rate", bnk_loan.get("interest_rate", 0.12)))
-    fw(inp, 127, "J", bnk_loan.get("term_years", bnk_loan.get("duration_years", 2)))
+    # Taux/durée = cellules d'entrée pilotant l'échéancier (formules template
+    # J793=InputsData!J125, J797=I125, etc.). Option B (zéro fabrication) :
+    # - prêt réel mais taux/durée absents des documents (incomplet) → on LAISSE VIDE
+    #   + commentaire « à compléter » → l'Excel recalcule dès que le coach saisit.
+    # - sinon → on écrit les valeurs réelles. Jamais de défaut inventé.
+    def _write_loan_terms(row, loan):
+        amount = loan.get("amount", 0) or 0
+        if amount <= 0:
+            return  # pas de prêt → on ne touche pas (laisse le template tel quel)
+        if loan.get("incomplet"):
+            for col, label in (("I", "taux d'intérêt"), ("J", "durée de remboursement")):
+                cell = inp[f"{col}{row}"]
+                cell.value = None
+                cell.comment = Comment(f"À compléter : {label} non renseigné dans les documents.", "ESONO")
+            return
+        fw(inp, row, "I", loan.get("rate", loan.get("interest_rate")))
+        fw(inp, row, "J", loan.get("term_years", loan.get("duration_years")))
+    _write_loan_terms(125, ovo_loan)
+    _write_loan_terms(126, fam_loan)
+    _write_loan_terms(127, bnk_loan)
 
     # Loans: disbursement (785-787), grace (793/802/811), repayments, interest
     for loan_data, disb_row, grace_row, rate_row, interest_h1_row in [
@@ -350,6 +365,13 @@ def fill_plan_financier(wb, data):
             fw(fin, disb_row, "T", amount)
             # Aussi écrire dans J pour la référence
             fw(fin, disb_row, "J", amount)
+
+            # Prêt incomplet (taux/durée absents) : on n'écrit PAS d'échéancier
+            # statique fabriqué. On laisse les formules du template (S794=…/J793…)
+            # calculer à partir des cellules d'entrée I/J (vides → 0/#DIV/0! tant
+            # que le coach n'a pas saisi, puis recalcul auto). Zéro fabrication.
+            if loan_data.get("incomplet"):
+                continue
 
             # Durée
             fw(fin, grace_row, "J", term)
