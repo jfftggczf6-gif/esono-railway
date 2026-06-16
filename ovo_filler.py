@@ -163,6 +163,15 @@ def fill_plan_financier(wb, data):
     fw(inp, 17, "J", data.get("tax_regime_1", 0.04))
     fw(inp, 18, "J", data.get("tax_regime_2", 0.25))
 
+    # Textes libres de régime fiscal : le template arrive avec « REVENUS <= 200 M F CFA »
+    # (seuil régime PME Côte d'Ivoire). C'est faux hors zone FCFA → pour un pays non-FCFA
+    # (ex. RDC en USD) on VIDE ces descriptions au lieu d'afficher un seuil FCFA inapproprié.
+    _cur = (data.get("currency") or "").upper().replace(" ", "")
+    if _cur not in ("XOF", "XAF", "FCFA"):
+        for _r in (17, 18):
+            for _c in ("H", "I"):
+                inp[f"{_c}{_r}"].value = None
+
     # ═══ 2. Years ═══
     years = data.get("years", {})
     ym2 = years.get("year_minus_2", data.get("current_year", 2024) - 2)
