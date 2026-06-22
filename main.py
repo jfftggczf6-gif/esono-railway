@@ -29,7 +29,7 @@ app.add_middleware(
 PARSER_API_KEY = os.getenv("PARSER_API_KEY", "esono-parser-dev-key")
 
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB max
-MAX_CHARS_PER_FILE = 50_000  # 50K chars max per file
+MAX_CHARS_PER_FILE = 120_000  # 120K chars max per file (les bundles d'états financiers scannés sont volumineux après OCR)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -45,13 +45,14 @@ def parse_pdf(file_bytes: bytes, filename: str) -> dict:
     
     full_text = ""
     tables_found = 0
-    
+    empty_page_indices = []  # pages sans texte (scannées) → à OCR-iser
+
     for page_num in range(max_pages):
         page = doc[page_num]
-        
+
         # Extract text (works for text PDFs)
         page_text = page.get_text("text")
-        
+
         # If no text found, try OCR via pymupdf's built-in OCR
         if len(page_text.strip()) < 20:
             try:
@@ -59,10 +60,13 @@ def parse_pdf(file_bytes: bytes, filename: str) -> dict:
                 page_text = page.get_text("text", flags=fitz.TEXT_PRESERVE_WHITESPACE)
             except:
                 pass
-        
+
+        if len(page_text.strip()) < 20:
+            empty_page_indices.append(page_num)  # page scannée (image) → texte absent
+
         if page_text.strip():
             full_text += f"\n--- Page {page_num + 1}/{total_pages} ---\n{page_text.strip()}\n"
-    
+
     doc.close()
     
     # Try pdfplumber for table extraction (better for financial statements)
@@ -104,6 +108,7 @@ def parse_pdf(file_bytes: bytes, filename: str) -> dict:
         "tables_found": tables_found,
         "quality": quality,
         "method": "pymupdf+pdfplumber",
+        "empty_page_indices": empty_page_indices,
     }
 
 
@@ -596,6 +601,50 @@ def parse_pdf_via_claude(file_bytes: bytes, filename: str) -> Optional[dict]:
         return None
 
 
+def ocr_pages_via_claude(file_bytes: bytes, page_indices: list, filename: str, max_pages: int = 45) -> str:
+    """OCR de pages scannées SPÉCIFIQUES via Claude vision, page par page.
+    Pour les PDF MIXTES (pages texte + pages scannées) : on rend chaque page scannée
+    en image et on l'OCR-ise individuellement → aucune troncature (contrairement à
+    l'envoi du PDF entier limité par max_tokens), et bien plus précis que Tesseract sur
+    les états financiers scannés."""
+    import fitz, base64
+    client = _get_anthropic_client()
+    if client is None or not page_indices:
+        return ""
+    doc = fitz.open(stream=file_bytes, filetype="pdf")
+    out = ""
+    done = 0
+    for idx in page_indices:
+        if done >= max_pages:
+            out += f"\n[... {len(page_indices) - done} page(s) scannée(s) supplémentaire(s) non OCR-isée(s)]\n"
+            break
+        try:
+            page = doc[idx]
+            pix = page.get_pixmap(dpi=150)
+            png = pix.tobytes("png")
+            b64 = base64.b64encode(png).decode("ascii")
+            resp = client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=4096,
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": b64}},
+                        {"type": "text", "text": CLAUDE_OCR_PROMPT},
+                    ],
+                }],
+            )
+            txt = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text").strip()
+            if txt:
+                out += f"\n--- Page {idx + 1} (OCR Claude) ---\n{txt}\n"
+            done += 1
+        except Exception as e:
+            print(f"[claude-page-ocr] page {idx + 1} échouée: {e}")
+    doc.close()
+    print(f"[claude-page-ocr] {done} page(s) scannée(s) OCR-isée(s) sur {len(page_indices)} pour {filename}")
+    return out
+
+
 # ═══════════════════════════════════════════════════════════════
 # IMAGE OCR — Tesseract (gratuit) avec fallback Claude si qualité faible
 # ═══════════════════════════════════════════════════════════════
@@ -771,7 +820,8 @@ async def parse_document(
         # Route to the right parser
         if ext == "pdf":
             result = parse_pdf(file_bytes, filename)
-            # If pymupdf found almost no text, try OCR
+            scanned = result.get("empty_page_indices") or []
+            # Cas 1 : tout (ou presque) le doc est scanné → OCR complet
             if result["quality"] in ("low", "failed"):
                 print(f"[parser] PDF text extraction poor ({len(result['content'])} chars), trying OCR...")
                 try:
@@ -780,6 +830,19 @@ async def parse_document(
                         result = ocr_result
                 except Exception as e:
                     print(f"[parser] OCR failed: {e}")
+            # Cas 2 : doc MIXTE (pages texte + pages scannées). Sans ça, les pages scannées
+            # (ex. états financiers d'un bundle audité) étaient perdues car la qualité globale
+            # passait "high" grâce aux pages texte. → OCR Claude des pages scannées + fusion.
+            elif scanned:
+                print(f"[parser] PDF mixte {filename}: {len(scanned)} page(s) scannée(s) → OCR Claude page par page...")
+                try:
+                    ocr_text = ocr_pages_via_claude(file_bytes, scanned, filename)
+                    if ocr_text.strip():
+                        result["content"] = (result["content"] + "\n\n══════ OCR DES PAGES SCANNÉES ══════\n" + ocr_text)[:MAX_CHARS_PER_FILE]
+                        result["method"] = result["method"] + "+claude_page_ocr"
+                        result["quality"] = "high"
+                except Exception as e:
+                    print(f"[parser] OCR pages scannées échoué: {e}")
         
         elif ext in ("xlsx", "xls"):
             result = parse_excel(file_bytes, filename)
